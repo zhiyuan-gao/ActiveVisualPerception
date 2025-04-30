@@ -43,15 +43,12 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         self.robot.set_joint_velocity_target(self.actions, joint_ids=self.dof_idx)
 
     def _get_observations(self) -> dict:
-        # the observations 
-        self.velocity = self.robot.data.root_com_vel_w 
+        self.velocity = self.robot.data.root_com_lin_vel_b 
         observations = {"policy": self.velocity}
-
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
-
-        total_reward = torch.ones((len(self.robot._ALL_INDICES), 1)).cuda()
+        total_reward = torch.linalg.norm(self.velocity, dim=-1, keepdim=True)
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
