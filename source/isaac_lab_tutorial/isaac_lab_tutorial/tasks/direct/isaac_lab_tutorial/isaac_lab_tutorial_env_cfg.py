@@ -3,7 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
 from isaac_lab_tutorial.robots.jetbot import JETBOT_CONFIG
 
 from isaaclab.assets import ArticulationCfg
