@@ -98,7 +98,7 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         self.visualization_markers.visualize(loc, rots, marker_indices=indices)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
-        self.actions = actions.clone() + torch.ones_like(actions)
+        self.actions = actions.clone()# + torch.ones_like(actions)
         self._visualize_markers()
 
     def _apply_action(self) -> None:
@@ -118,6 +118,9 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         forward_reward = self.robot.data.root_com_lin_vel_b[:,0].reshape(-1,1)
         alignment_reward = torch.sum(self.forwards * self.commands, dim=-1, keepdim=True)
         total_reward = forward_reward + alignment_reward
+        # total_reward = forward_reward*alignment_reward
+        # total_reward = forward_reward*alignment_reward + forward_reward
+        # total_reward = forward_reward*torch.exp(alignment_reward)
         return total_reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
