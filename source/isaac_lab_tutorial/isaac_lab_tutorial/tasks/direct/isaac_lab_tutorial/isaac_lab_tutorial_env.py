@@ -63,9 +63,9 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         self.all_envs = torch.arange(self.cfg.scene.num_envs)
 
         self.yaws = torch.zeros((self.cfg.scene.num_envs, 1)).cuda()
-        self.commands = torch.zeros((self.cfg.scene.num_envs, 3)).cuda()
 
-        self.commands[:,:2] = torch.randn((self.cfg.scene.num_envs, 2)).cuda()
+        self.commands = torch.randn((self.cfg.scene.num_envs, 3)).cuda()
+        self.commands[:,-1] = 0.0
         self.commands = self.commands/torch.linalg.norm(self.commands, dim=1, keepdim=True)
         
         ratio = self.commands[:,1]/(self.commands[:,0]+1E-8)
@@ -107,10 +107,13 @@ class IsaacLabTutorialEnv(DirectRLEnv):
     def _get_observations(self) -> dict:
         self.velocity = self.robot.data.root_com_vel_w 
         self.forwards = math_utils.quat_apply(self.robot.data.root_link_quat_w, self.robot.data.FORWARD_VEC_B)
-        dot = torch.sum(self.forwards * self.commands, dim=-1, keepdim=True)
-        cross = torch.cross(self.forwards, self.commands, dim=-1)[:,-1].reshape(-1,1)
-        forward_speed = self.robot.data.root_com_lin_vel_b[:,0].reshape(-1,1)
-        obs = torch.hstack((dot, cross, forward_speed))
+
+        obs = torch.hstack((self.velocity, self.commands))
+
+        # dot = torch.sum(self.forwards * self.commands, dim=-1, keepdim=True)
+        # cross = torch.cross(self.forwards, self.commands, dim=-1)[:,-1].reshape(-1,1)
+        # forward_speed = self.robot.data.root_com_lin_vel_b[:,0].reshape(-1,1)
+        # obs = torch.hstack((dot, cross, forward_speed))
         observations = {"policy": obs}
         return observations
 
@@ -133,7 +136,8 @@ class IsaacLabTutorialEnv(DirectRLEnv):
             env_ids = self.robot._ALL_INDICES
         super()._reset_idx(env_ids)
 
-        self.commands[env_ids,:2] = torch.randn((len(env_ids), 2)).cuda()
+        self.commands[env_ids] = torch.randn((len(env_ids), 3)).cuda()
+        self.commands[env_ids,-1] = 0.0
         self.commands[env_ids] = self.commands[env_ids]/torch.linalg.norm(self.commands[env_ids], dim=1, keepdim=True)
         ratio = self.commands[env_ids][:,1]/(self.commands[env_ids][:,0]+1E-8)
         
