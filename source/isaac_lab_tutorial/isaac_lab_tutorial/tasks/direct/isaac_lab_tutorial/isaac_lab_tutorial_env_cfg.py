@@ -18,8 +18,8 @@ class IsaacLabTutorialEnvCfg(DirectRLEnvCfg):
     episode_length_s = 5.0
     # - spaces definition
     action_space = 2
-    # observation_space = 3
-    observation_space = 9
+    # observation_space = 9
+    observation_space = 3
     state_space = 0
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)

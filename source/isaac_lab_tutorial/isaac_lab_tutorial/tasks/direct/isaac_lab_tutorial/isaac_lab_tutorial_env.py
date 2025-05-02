@@ -26,12 +26,12 @@ def define_markers() -> VisualizationMarkers:
         markers={
                 "forward": sim_utils.UsdFileCfg(
                     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                    scale=(0.5, 0.5, 1.0),
+                    scale=(0.25, 0.25, 0.5),
                     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
                 ),
                 "command": sim_utils.UsdFileCfg(
                     usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/arrow_x.usd",
-                    scale=(0.5, 0.5, 1.0),
+                    scale=(0.25, 0.25, 0.5),
                     visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
                 ),
         },
@@ -43,12 +43,9 @@ class IsaacLabTutorialEnv(DirectRLEnv):
 
     def __init__(self, cfg: IsaacLabTutorialEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
-
         self.dof_idx, _ = self.robot.find_joints(self.cfg.dof_names)
-        print(self.dof_idx)
 
     def _setup_scene(self):
-        self.visualization_markers = define_markers()
         self.robot = Articulation(self.cfg.robot_cfg)
         # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
@@ -60,22 +57,21 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
-        self.all_envs = torch.arange(self.cfg.scene.num_envs)
+        self.visualization_markers = define_markers()
 
+        self.up_dir = torch.tensor([0.0, 0.0, 1.0]).cuda()  
         self.yaws = torch.zeros((self.cfg.scene.num_envs, 1)).cuda()
-
         self.commands = torch.randn((self.cfg.scene.num_envs, 3)).cuda()
         self.commands[:,-1] = 0.0
         self.commands = self.commands/torch.linalg.norm(self.commands, dim=1, keepdim=True)
         
+        # offsets to account for atan range and keep things on [-pi, pi]
         ratio = self.commands[:,1]/(self.commands[:,0]+1E-8)
-        
         gzero = torch.where(self.commands > 0, True, False)
         lzero = torch.where(self.commands < 0, True, False)
         plus = lzero[:,0]*gzero[:,1]
         minus = lzero[:,0]*lzero[:,1]
         offsets = torch.pi*plus - torch.pi*minus
-
         self.yaws = torch.atan(ratio).reshape(-1,1) + offsets.reshape(-1,1)
 
         self.marker_locations = torch.zeros((self.cfg.scene.num_envs, 3)).cuda()
@@ -83,7 +79,7 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         self.marker_offset[:,-1] = 0.5
         self.forward_marker_orientations = torch.zeros((self.cfg.scene.num_envs, 4)).cuda()
         self.command_marker_orientations = torch.zeros((self.cfg.scene.num_envs, 4)).cuda()
-        self.up_dir = torch.tensor([0.0, 0.0, 1.0]).cuda()
+        
 
     def _visualize_markers(self):
         self.marker_locations = self.robot.data.root_pos_w
@@ -93,7 +89,9 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         loc = self.marker_locations + self.marker_offset
         loc = torch.vstack((loc, loc))
         rots = torch.vstack((self.forward_marker_orientations, self.command_marker_orientations))
-        indices = torch.hstack((torch.zeros_like(self.all_envs), torch.ones_like(self.all_envs)))
+
+        all_envs = torch.arange(self.cfg.scene.num_envs)
+        indices = torch.hstack((torch.zeros_like(all_envs), torch.ones_like(all_envs)))
 
         self.visualization_markers.visualize(loc, rots, marker_indices=indices)
 
@@ -107,13 +105,13 @@ class IsaacLabTutorialEnv(DirectRLEnv):
     def _get_observations(self) -> dict:
         self.velocity = self.robot.data.root_com_vel_w 
         self.forwards = math_utils.quat_apply(self.robot.data.root_link_quat_w, self.robot.data.FORWARD_VEC_B)
+        # obs = torch.hstack((self.velocity, self.commands))
 
-        obs = torch.hstack((self.velocity, self.commands))
-
-        # dot = torch.sum(self.forwards * self.commands, dim=-1, keepdim=True)
-        # cross = torch.cross(self.forwards, self.commands, dim=-1)[:,-1].reshape(-1,1)
-        # forward_speed = self.robot.data.root_com_lin_vel_b[:,0].reshape(-1,1)
-        # obs = torch.hstack((dot, cross, forward_speed))
+        dot = torch.sum(self.forwards * self.commands, dim=-1, keepdim=True)
+        cross = torch.cross(self.forwards, self.commands, dim=-1)[:,-1].reshape(-1,1)
+        forward_speed = self.robot.data.root_com_lin_vel_b[:,0].reshape(-1,1)
+        obs = torch.hstack((dot, cross, forward_speed))
+        
         observations = {"policy": obs}
         return observations
 
@@ -139,21 +137,18 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         self.commands[env_ids] = torch.randn((len(env_ids), 3)).cuda()
         self.commands[env_ids,-1] = 0.0
         self.commands[env_ids] = self.commands[env_ids]/torch.linalg.norm(self.commands[env_ids], dim=1, keepdim=True)
-        ratio = self.commands[env_ids][:,1]/(self.commands[env_ids][:,0]+1E-8)
         
-
+        ratio = self.commands[env_ids][:,1]/(self.commands[env_ids][:,0]+1E-8)
         gzero = torch.where(self.commands[env_ids] > 0, True, False)
         lzero = torch.where(self.commands[env_ids]< 0, True, False)
         plus = lzero[:,0]*gzero[:,1]
         minus = lzero[:,0]*lzero[:,1]
         offsets = torch.pi*plus - torch.pi*minus
-
         self.yaws[env_ids] = torch.atan(ratio).reshape(-1,1) + offsets.reshape(-1,1)
 
         default_root_state = self.robot.data.default_root_state[env_ids]
         default_root_state[:, :3] += self.scene.env_origins[env_ids]
 
         self.robot.write_root_state_to_sim(default_root_state, env_ids)
-
         self._visualize_markers()
 
