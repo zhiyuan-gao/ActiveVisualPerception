@@ -10,7 +10,7 @@
 import argparse
 
 from isaaclab.app import AppLauncher
-
+import matplotlib.pyplot as plt
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Random agent for Isaac Lab environments.")
 parser.add_argument(
@@ -51,7 +51,9 @@ def main():
     print(f"[INFO]: Gym observation space: {env.observation_space}")
     print(f"[INFO]: Gym action space: {env.action_space}")
     # reset environment
-    env.reset()
+    # env.reset()
+    obs, _ = env.reset()
+
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
@@ -59,7 +61,17 @@ def main():
             # sample actions from -1 to 1
             actions = 2 * torch.rand(env.action_space.shape, device=env.unwrapped.device) - 1
             # apply actions
-            env.step(actions)
+            # env.step(actions)
+            obs, reward, terminated, truncated, info = env.step(actions)
+
+            # # ---- 👇 显示相机图像 ----
+            # rgb_image = obs["policy"][0].cpu().numpy()   # 第 0 个环境的图像
+            # plt.imshow(rgb_image.astype("uint8"))        # 如果范围是 0-255
+            # # plt.imshow(rgb_image)                      # 如果范围是 0-1
+            # plt.axis("off")
+            # plt.pause(0.001)  # 非阻塞刷新
+
+
 
     # close the simulator
     env.close()

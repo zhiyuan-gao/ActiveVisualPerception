@@ -22,9 +22,10 @@ class IsaacLabTutorialEnvCfg(DirectRLEnvCfg):
     observation_space = 3
     state_space = 0
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+    # sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, enable_cameras=True)
+    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation*4)
     # robot(s)
     robot_cfg: ArticulationCfg = JETBOT_CONFIG.replace(prim_path="/World/envs/env_.*/Robot")
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=100, env_spacing=2.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4, env_spacing=5.0, replicate_physics=True)
     dof_names = ["left_wheel_joint", "right_wheel_joint"]
