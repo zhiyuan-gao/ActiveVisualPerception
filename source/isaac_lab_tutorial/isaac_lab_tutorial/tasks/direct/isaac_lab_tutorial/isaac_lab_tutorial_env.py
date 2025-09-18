@@ -188,57 +188,76 @@ class IsaacLabTutorialEnv(DirectRLEnv):
         return {"policy": rgb_image}
 
     def _get_rewards(self) -> torch.Tensor:
-        # 删除原有占位的奖励计算（如果有，例如返回0的占位）
-        # 插入：根据机器人与目标的距离和碰撞情况计算奖励
-        # 机器人与目标的距离（二维平面距离）
-        robot_xy = self.robot.data.root_state_w[:, 0:2]  # 机器人底座在世界坐标的 (x, y)
-        target_xy = self._target.data.body_pos_w[:, 0, 0:2]  # 目标物体的位置 (x, y)
-        dist_to_target = torch.norm(robot_xy - target_xy, p=2, dim=-1)
-        # 距目标越近奖励越高（采用负距离作为即时奖励）
-        reward = -dist_to_target
-        # 额外奖励和惩罚项
-        target_reached = dist_to_target < 0.2  # 判定是否到达目标阈值
-        # 检测碰撞：机器人是否撞墙或撞障碍物
-        wall_collision = torch.any(torch.abs(robot_xy) > 1.3, dim=-1)
-        # 计算机器人到每个障碍的距离，判断是否碰撞（阈值约为0.3m）
-        obs_positions = torch.stack([obs.data.body_pos_w[:, 0, 0:2] for obs in self._obstacles], dim=1)
-        dist_to_obs = torch.norm(robot_xy.unsqueeze(1) - obs_positions, p=2, dim=-1)
-        obs_collision = torch.any(dist_to_obs < 0.3, dim=1)
-        collision = torch.logical_or(wall_collision, obs_collision)
-        # 如果到达目标，给予额外正奖励；如果发生碰撞，给予负奖励
-        reward += target_reached.float() * 10.0
-        reward += collision.float() * (-10.0)
+        """基于距离/到达/碰撞的奖励。"""
+        # 世界系位置
+        robot_xy_w  = self.robot.data.root_pos_w[:, :2]       # (N,2)
+        target_xy_w = self._target.data.root_pos_w[:, :2]     # (N,2)
+
+        # 与目标的欧氏距离（世界系一致即可）
+        dist_to_target = torch.norm(robot_xy_w - target_xy_w, dim=-1)  # (N,)
+
+        # 撞墙判定：用“相对各自 env 原点”的局部坐标
+        env_xy = self.scene.env_origins[:, :2]                # (N,2)
+        robot_xy_local = robot_xy_w - env_xy                  # (N,2)
+        arena_half = getattr(self, "_arena_half", 1.5)
+        margin = 0.05
+        wall_collision = (torch.abs(robot_xy_local) > (arena_half - margin)).any(dim=-1)  # (N,)
+
+        # 撞障碍：与每个障碍的最近距离（世界系）
+        if hasattr(self, "_obstacles") and len(self._obstacles) > 0:
+            obs_xy_w = torch.stack([obs.data.root_pos_w[:, :2] for obs in self._obstacles], dim=1)  # (N,K,2)
+            dist_to_obs = torch.norm(robot_xy_w.unsqueeze(1) - obs_xy_w, dim=-1)                    # (N,K)
+            obs_collision = (dist_to_obs < 0.30).any(dim=1)                                         # (N,)
+        else:
+            obs_collision = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        # 到达目标
+        reached = dist_to_target < 0.20
+
+        # 奖励
+        reward = -dist_to_target                                            # 距离越近越好
+        reward = reward + reached.float() * 10.0                            # 到达奖励
+        reward = reward - (wall_collision | obs_collision).float() * 10.0   # 碰撞惩罚
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        # 删除原有实现（如果有，仅基础时间截断判断等）
-        # 插入：基于目标达成、碰撞和时间步长确定终止标志
-        robot_xy = self.robot.data.root_state_w[:, 0:2]
-        print(f"Robot XY: {robot_xy}")
-        target_xy = self._target.data.body_pos_w[:, 0, 0:2]
-        dist_to_target = torch.norm(robot_xy - target_xy, p=2, dim=-1)
-        # 条件1: 到达目标
-        reached = dist_to_target < 0.2
+        """终止与截断：到达目标或发生碰撞为终止；超时为截断。"""
+        # 世界系位置
+        robot_xy_w  = self.robot.data.root_pos_w[:, :2]
+        target_xy_w = self._target.data.root_pos_w[:, :2]
 
-        if reached.sum().item() > 0:
-            print(f"Reached: {reached.sum().item()}/{self.cfg.scene.num_envs}, Distances: {dist_to_target}")
-        # 条件2: 发生碰撞（撞墙或障碍）
-        wall_collision = torch.any(torch.abs(robot_xy) > 1.5, dim=-1)
-        print(f"Wall Collisions: {wall_collision.sum().item()}/{self.cfg.scene.num_envs}")
-        obs_positions = torch.stack([obs.data.body_pos_w[:, 0, 0:2] for obs in self._obstacles], dim=1)
-        dist_to_obs = torch.norm(robot_xy.unsqueeze(1) - obs_positions, p=2, dim=-1)
-        obs_collision = torch.any(dist_to_obs < 0.3, dim=1)
-        print(f"Obs Collisions: {obs_collision.sum().item()}/{self.cfg.scene.num_envs}")
+        # 与目标距离
+        dist_to_target = torch.norm(robot_xy_w - target_xy_w, dim=-1)
 
-        collision = torch.logical_or(wall_collision, obs_collision)
-        # if collision.sum().item() > 0:
-        #     print(f"Collisions: {collision.sum().item()}/{self.cfg.scene.num_envs}")
-        # 终止条件：达到目标或发生碰撞（成功或失败终止）
-        terminated = torch.logical_or(reached, collision)
-        # 截断条件：达到最大步长（episode超时）
-        truncated = self.episode_length_buf >= self.max_episode_length - 1
-        if truncated.sum().item() > 0:
-            print(f"Truncated: {truncated.sum().item()}/{self.cfg.scene.num_envs}")
+        # 撞墙（局部坐标）
+        env_xy = self.scene.env_origins[:, :2]
+        robot_xy_local = robot_xy_w - env_xy
+        arena_half = getattr(self, "_arena_half", 1.5)
+        margin = 0.05
+        wall_collision = (torch.abs(robot_xy_local) > (arena_half - margin)).any(dim=-1)
+
+        # 撞障碍（世界系）
+        if hasattr(self, "_obstacles") and len(self._obstacles) > 0:
+            obs_xy_w = torch.stack([obs.data.root_pos_w[:, :2] for obs in self._obstacles], dim=1)
+            dist_to_obs = torch.norm(robot_xy_w.unsqueeze(1) - obs_xy_w, dim=-1)
+            obs_collision = (dist_to_obs < 0.30).any(dim=1)
+        else:
+            obs_collision = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        # 到达目标
+        reached = dist_to_target < 0.20
+
+        # 终止 / 截断
+        terminated = reached | wall_collision | obs_collision
+        truncated  = self.episode_length_buf >= self.max_episode_length - 1
+
+        # 可选：只打印一次，核对 world/local 是否匹配
+        if not hasattr(self, "_dbg_printed"):
+            print("Robot XY world[0] :", robot_xy_w[0].detach().cpu().numpy())
+            print("Env origin[0]     :", env_xy[0].detach().cpu().numpy())
+            print("Robot XY local[0] :", robot_xy_local[0].detach().cpu().numpy())
+            self._dbg_printed = True
+
         return terminated, truncated
 
     def _reset_idx(self, env_ids: Sequence[int] | None = None):
